@@ -20,6 +20,7 @@ import tempfile
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPalette, QColor, QFont, QFontDatabase
+from PySide6.QtWidgets import QProxyStyle, QStyle
 
 import app_info
 
@@ -249,6 +250,24 @@ def _palette():
     return p
 
 
+class AppStyle(QProxyStyle):
+    """Qt's Fusion style, with one Windows habit added: the underlined letters in
+    menus (Alt shortcuts like Alt+M) only appear while Alt is held down.
+    The shortcuts themselves always work."""
+    show_shortcut_underlines = False
+
+    def __init__(self):
+        super().__init__("Fusion")
+
+    def styleHint(self, hint, option=None, widget=None, return_data=None):
+        if hint == QStyle.SH_UnderlineShortcut:
+            return int(AppStyle.show_shortcut_underlines)
+        return super().styleHint(hint, option, widget, return_data)
+
+
+_style = None   # keep a reference so Python doesn't delete the style while Qt uses it
+
+
 def apply(app, mode):
     """Switch the whole app to "light", "dark" or "system" (follow Windows)."""
     global MODE, DARK_ACTIVE
@@ -260,7 +279,10 @@ def apply(app, mode):
     C.clear()
     C.update(DARK if DARK_ACTIVE else LIGHT)
 
-    app.setStyle("Fusion")
+    global _style
+    if _style is None:
+        _style = AppStyle()
+        app.setStyle(_style)
     font = QFont(FONT)
     font.setPixelSize(14)
     app.setFont(font)

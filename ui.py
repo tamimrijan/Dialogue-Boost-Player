@@ -795,7 +795,16 @@ class MainWindow(QMainWindow):
             self.on_mouse_moved()
         elif event.type() == QEvent.ApplicationDeactivate:
             self._set_cursor_hidden(False)   # never leave the pointer hidden when switching apps
+            self._show_menu_underlines(False)
+        elif event.type() in (QEvent.KeyPress, QEvent.KeyRelease) and event.key() == Qt.Key_Alt:
+            # Like other Windows apps: menu shortcut letters are underlined only while Alt is down.
+            self._show_menu_underlines(event.type() == QEvent.KeyPress)
         return False   # never swallow the event
+
+    def _show_menu_underlines(self, show):
+        if theme.AppStyle.show_shortcut_underlines != show:
+            theme.AppStyle.show_shortcut_underlines = show
+            self.menuBar().update()
 
     # Drag and drop: open videos, load subtitle files as subtitles.
     def dragEnterEvent(self, event):

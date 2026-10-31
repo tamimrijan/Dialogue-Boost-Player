@@ -14,12 +14,26 @@
 #define AppPublisher "Tamim Ahmed Rijan"
 #define AppURL "https://github.com/tamimrijan"
 #define AppInstagram "https://www.instagram.com/tamim_ahmed_rijan/"
-#define AppExeName "DialogueBoostPlayer.exe"
+#ifndef AppExeName
+  #define AppExeName "DialogueBoostPlayer.exe"
+#endif
+#ifndef SourceDir
+  #define SourceDir "..\dist\DialogueBoostPlayer"
+#endif
 #define ProgId "DialogueBoostPlayer.Media"
+; Must match MUTEX_NAME in app_info.py: the running app holds it, so (un)install can detect it.
+#define AppMutexName "TamimRijan.DialogueBoostPlayer.Running"
+; AppId identifies this app for updates/uninstall. Never change it after the first release.
+; (It can be overridden only to build a separate test installer.)
+#ifndef AppIdValue
+  #define AppIdValue "{{8F3C2A1E-6B4D-4E2A-9C1F-3D5B7A9E0C21}"
+#endif
+#ifndef OutputName
+  #define OutputName "DialogueBoostPlayer_Setup_" + AppVersion
+#endif
 
 [Setup]
-; AppId identifies this app for updates/uninstall. Never change it after the first release.
-AppId={{8F3C2A1E-6B4D-4E2A-9C1F-3D5B7A9E0C21}
+AppId={#AppIdValue}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
@@ -49,7 +63,7 @@ SetupIconFile=..\assets\app.ico
 UninstallDisplayIcon={app}\{#AppExeName}
 UninstallDisplayName={#AppName}
 OutputDir=..\release
-OutputBaseFilename=DialogueBoostPlayer_Setup_{#AppVersion}
+OutputBaseFilename={#OutputName}
 Compression=lzma2/ultra64
 SolidCompression=yes
 ChangesAssociations=yes
@@ -65,7 +79,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "openwith"; Description: "Add to the ""Open with"" menu for video files"; GroupDescription: "File types:"
 
 [Files]
-Source: "..\dist\DialogueBoostPlayer\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Comment: "Play videos with Dialogue Boost"
@@ -97,3 +111,45 @@ Root: HKA; Subkey: "Software\Classes\.m2ts\OpenWithProgids"; ValueType: string; 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
 Filename: "{#AppURL}"; Description: "Visit {#AppPublisher} on GitHub"; Flags: postinstall shellexec skipifsilent unchecked nowait
+
+[UninstallDelete]
+; Remove the whole install folder, including anything created after installing.
+Type: filesandordirs; Name: "{app}"
+
+[Code]
+{ Uninstall step 1: if the player is running, its files can't be deleted.
+  Offer to close it (silent uninstalls close it automatically). }
+function InitializeUninstall(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := True;
+  if CheckForMutexes('{#AppMutexName}') then
+  begin
+    if UninstallSilent or (MsgBox('{#AppName} is still running.' + #13#10 + #13#10 +
+        'Close it and continue uninstalling?', mbConfirmation, MB_YESNO) = IDYES) then
+    begin
+      Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#AppExeName}', '', SW_HIDE,
+           ewWaitUntilTerminated, ResultCode);
+      Sleep(1000);   { give Windows a moment to release the files }
+    end
+    else
+      Result := False;   { the user said no: cancel, nothing is removed }
+  end;
+end;
+
+{ Uninstall step 2: after the program files are gone, offer to delete the user's
+  settings and resume positions too (%APPDATA%\DialogueBoostPlayer). }
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  SettingsDir: String;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    SettingsDir := ExpandConstant('{userappdata}\DialogueBoostPlayer');
+    if DirExists(SettingsDir) then
+      { (no line may start with "#" here: Inno's preprocessor would read it as a directive) }
+      if UninstallSilent or (MsgBox('Do you also want to delete your settings and saved resume positions?' + #13#10#13#10 + SettingsDir + #13#10#13#10 + 'Choose No to keep them for a future reinstall.', mbConfirmation, MB_YESNO) = IDYES) then
+        DelTree(SettingsDir, True, True, True);
+  end;
+end;

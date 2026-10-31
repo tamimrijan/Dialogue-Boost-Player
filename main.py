@@ -29,11 +29,18 @@ def make_mpv_dll_findable():
             os.add_dll_directory(folder)
 
 
+_running_marker = None   # kept for the whole run; Windows removes it when the app exits
+
+
 def main():
+    global _running_marker
     # Give the app its own taskbar identity, so Windows shows our icon
     # instead of the Python icon when running from source.
     try:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(f"TamimRijan.{app_info.EXE_NAME}")
+        # A named "mutex" tells the uninstaller/installer that the player is running,
+        # so it can close it first instead of failing to delete files that are in use.
+        _running_marker = ctypes.windll.kernel32.CreateMutexW(None, False, app_info.MUTEX_NAME)
     except Exception:
         pass
 
