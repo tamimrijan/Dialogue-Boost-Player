@@ -58,7 +58,41 @@ def path_key(path):
 
 class VideoWidget(QWidget):
     """mpv needs a real Windows window handle (HWND) to draw into, so we ask Qt
-    to give this widget its own native window."""
+    to give this widget its own native window.
+
+    mpv's own window inside this one is disabled, so Windows sends the mouse to
+    THIS widget instead of mpv. That's why double-click and the wheel are handled here."""
+    double_clicked = Signal()
+    wheel_turned = Signal(int)   # number of wheel notches: positive = up, negative = down
+
+    def mousePressEvent(self, event):
+        # In fullscreen, Qt sometimes delivers a double-click as two plain clicks (the
+        # floating controls appearing under the mouse reset its detection), so we also
+        # detect it ourselves: two left clicks, close together, within Windows' double-click time.
+        if event.button() == Qt.LeftButton:
+            now, pos = event.timestamp(), event.position()
+            last = getattr(self, "_last_click", None)
+            if last and now - last[0] <= QApplication.doubleClickInterval() \
+                    and (pos - last[1]).manhattanLength() <= 8:
+                self._last_click = None
+                self.double_clicked.emit()
+                return
+            self._last_click = (now, pos)
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._last_click = None
+            self.double_clicked.emit()
+
+    def wheelEvent(self, event):
+        # One notch = 120 units. Fast scrolling can arrive as one event with several
+        # notches, and touchpads send small pieces, so we add them up.
+        self._wheel = getattr(self, "_wheel", 0) + event.angleDelta().y()
+        notches = int(self._wheel / 120)
+        if notches:
+            self._wheel -= notches * 120
+            self.wheel_turned.emit(notches)
 
     def __init__(self):
         super().__init__()
@@ -233,6 +267,8 @@ class MainWindow(QMainWindow):
         self.player.file_loaded.connect(self._on_file_loaded)
         self.player.playback_error.connect(self._on_playback_error)
         self.player.key_pressed.connect(self.handle_key)
+        self.video.double_clicked.connect(self.toggle_fullscreen)
+        self.video.wheel_turned.connect(lambda step: self.change_volume(step * VOLUME_STEP))
 
         # --- welcome page / video, stacked on top of each other ---
         self.stack = QStackedWidget()
@@ -620,10 +656,12 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ actions
     def play_pause(self):
-        if self.player.has_file:
-            self.player.toggle_pause()
-        else:
+        if not self.player.has_file:
             self.open_dialog()
+        elif self.player.at_end:
+            self.player.restart()     # at the end, Play starts the video again
+        else:
+            self.player.toggle_pause()
 
     def stop(self):
         self.remember_position()
@@ -717,6 +755,9 @@ class MainWindow(QMainWindow):
             self.showMaximized()
         else:
             self.showNormal()
+        # Leaving fullscreen rebuilds the window frame, and Windows draws its title bar in the
+        # old (light) color. Repaint it in the current theme once the frame is back.
+        QTimer.singleShot(150, lambda: theme.title_bar(self))
         self._refresh_icons()
 
     def _place_overlay(self):
@@ -729,6 +770,9 @@ class MainWindow(QMainWindow):
     def _hide_controls(self):
         """The mouse has been still for a while: hide the fullscreen controls and
         the cursor (only over the video, never over buttons or menus)."""
+        if self.isFullScreen() and self.overlay.isVisible() and self.overlay.geometry().contains(QCursor.pos()):
+            self.hide_timer.start()   # the mouse is resting on the controls: keep them (and the cursor)
+            return
         if self.isFullScreen():
             self.overlay.hide()
         if self.player.has_file and self.isActiveWindow() and not self.overlay.underMouse() and \
@@ -791,6 +835,13 @@ class MainWindow(QMainWindow):
             super().keyPressEvent(event)
 
     def eventFilter(self, obj, event):
+        # Esc leaves fullscreen no matter which widget has the keyboard (menu bar in Alt mode,
+        # the floating controls, ...). Menus and dialogs still get their own Esc first.
+        if (event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape and self.isFullScreen()
+                and QApplication.activePopupWidget() is None
+                and QApplication.activeWindow() in (self, self.overlay)):
+            self.exit_fullscreen()
+            return True
         if event.type() == QEvent.MouseMove:
             self.on_mouse_moved()
         elif event.type() == QEvent.ApplicationDeactivate:
@@ -823,8 +874,12 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ closing
     def closeEvent(self, event):
-        self.tick_timer.stop()   # mpv is shut down below; stop polling it
+        # mpv is shut down below, so first stop everything that could still talk to it:
+        # the timers, and the app-wide event filter (a late mouse move would restart a timer).
+        QApplication.instance().removeEventFilter(self)
+        self.tick_timer.stop()
         self.hide_timer.stop()
+        self.boost_timer.stop()
         self._set_cursor_hidden(False)
         self.remember_position()
         if not self.isFullScreen() and not self.isMaximized():

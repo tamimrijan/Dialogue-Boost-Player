@@ -310,12 +310,17 @@ def title_bar(widget):
         for attribute in (20, 19):
             if ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(value), 4) == 0:
                 break
-        if widget.isVisible() and not (widget.isMaximized() or widget.isFullScreen()):
-            # Windows 10 doesn't repaint the title bar by itself. A 1-pixel resize and back
-            # forces it. (A maximized window repaints it the next time it's activated.)
-            size = widget.size()
-            widget.resize(size.width() + 1, size.height())
-            widget.resize(size)
+        if widget.isVisible():
+            # Windows 10 doesn't repaint the title bar by itself after this change; a
+            # half-repainted title bar shows the wrong color and blank/broken buttons.
+            # Telling the window "you're inactive" then "you're active" (or the reverse
+            # for an inactive window, so it ends in its real state) repaints all of it,
+            # also when maximized. Tested on normal and maximized windows.
+            user32 = ctypes.windll.user32
+            user32.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]
+            active = widget.isActiveWindow()
+            user32.SendMessageW(hwnd, 0x0086, 0 if active else 1, 0)   # WM_NCACTIVATE
+            user32.SendMessageW(hwnd, 0x0086, 1 if active else 0, 0)
     except Exception:
         pass
 

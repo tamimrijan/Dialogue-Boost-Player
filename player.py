@@ -63,6 +63,7 @@ class Player(QObject):
         except Exception:
             pass   # older mpv builds don't have this option
 
+        self.alive = True          # False after shutdown()
         self.boost_enabled = True
         self.boost_settings = None
         self.channels = 2
@@ -112,6 +113,11 @@ class Player(QObject):
         """Unload the file. mpv goes back to idle (black, nothing playing)."""
         self.mpv.command("stop")
 
+    def restart(self):
+        """Play from the beginning (used when Play is pressed at the end of a video)."""
+        self.seek_to(0)
+        self.mpv.pause = False
+
     def toggle_pause(self):
         self.mpv.pause = not self.mpv.pause
 
@@ -128,31 +134,32 @@ class Player(QObject):
             pass
 
     # Properties read by the UI timer. mpv returns None when nothing is loaded.
+    # After shutdown() they answer "nothing playing" instead of raising an error.
     @property
     def position(self):
-        return self.mpv.time_pos or 0.0
+        return (self.mpv.time_pos or 0.0) if self.alive else 0.0
 
     @property
     def duration(self):
-        return self.mpv.duration or 0.0
+        return (self.mpv.duration or 0.0) if self.alive else 0.0
 
     @property
     def paused(self):
-        return bool(self.mpv.pause)
+        return bool(self.mpv.pause) if self.alive else True
 
     @property
     def has_file(self):
-        return self.mpv.path is not None
+        return self.alive and self.mpv.path is not None
 
     @property
     def at_end(self):
-        return bool(self.mpv.eof_reached)
+        return self.alive and bool(self.mpv.eof_reached)
 
     @property
     def decoder_channels(self):
         """Channels of the playing audio track as it comes out of the decoder
         (2 = stereo, 6 = 5.1, 8 = 7.1), or None when no audio is playing."""
-        params = self.mpv.audio_params
+        params = self.mpv.audio_params if self.alive else None
         return params.get("channel-count") if params else None
 
     def set_volume(self, value):
@@ -274,6 +281,7 @@ class Player(QObject):
     # ---------------------------------------------------------------- cleanup
 
     def shutdown(self):
+        self.alive = False
         try:
             self.mpv.terminate()
         except Exception:

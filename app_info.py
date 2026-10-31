@@ -10,7 +10,7 @@ import sys
 
 APP_NAME = "Dialogue Boost Player"
 EXE_NAME = "DialogueBoostPlayer"
-VERSION = "1.1.2"
+VERSION = "1.1.3"
 MUTEX_NAME = "TamimRijan.DialogueBoostPlayer.Running"   # must match AppMutexName in installer/setup.iss
 DESCRIPTION = "A video player that makes movie dialogue clear without blowing up the explosions."
 
