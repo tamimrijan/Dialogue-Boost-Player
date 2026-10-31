@@ -52,7 +52,7 @@ class Player(QObject):
             audio_channels="stereo",        # ALWAYS output stereo (never mono, never 5.1)
             volume_max=150,
             hwdec="auto-safe",              # use the GPU to decode video when it is safe
-            cursor_autohide=1500,           # hide the mouse over the video after 1.5 s
+            cursor_autohide="no",           # the UI hides the mouse itself (see MainWindow._hide_controls)
             sub_fonts_dir=resource_path("fonts"),   # lets subtitles use the bundled Roboto Flex
             log_handler=self._on_log,
             loglevel="warn",
@@ -173,22 +173,38 @@ class Player(QObject):
 
     # ---------------------------------------------------------------- tracks
 
+    LANGUAGES = {"eng": "English", "en": "English", "ben": "Bengali", "bn": "Bengali", "hin": "Hindi",
+                 "hi": "Hindi", "urd": "Urdu", "tam": "Tamil", "tel": "Telugu", "jpn": "Japanese", "ja": "Japanese",
+                 "kor": "Korean", "ko": "Korean", "chi": "Chinese", "zho": "Chinese", "zh": "Chinese",
+                 "spa": "Spanish", "es": "Spanish", "fre": "French", "fra": "French", "fr": "French",
+                 "ger": "German", "deu": "German", "de": "German", "ita": "Italian", "por": "Portuguese",
+                 "rus": "Russian", "ara": "Arabic", "tur": "Turkish", "ind": "Indonesian", "und": None}
+    CHANNELS = {1: "Mono", 2: "Stereo", 6: "5.1", 7: "6.1", 8: "7.1"}
+
     def tracks(self, kind):
-        """Return a list of (id, label, selected) for 'audio' or 'sub' tracks."""
+        """Return a list of (id, label, selected) for 'audio' or 'sub' tracks.
+        Label example: "Track 2 · English · 5.1 · EAC3 · Commentary"."""
         result = []
         for t in self.mpv.track_list or []:
             if t.get("type") != kind:
                 continue
-            parts = [f"#{t['id']}"]
-            if t.get("lang"):
-                parts.append(t["lang"])
-            if t.get("title"):
+            parts = [f"Track {t['id']}"]
+            lang = t.get("lang")
+            if lang:
+                name = self.LANGUAGES.get(lang.lower(), lang.upper())
+                if name:
+                    parts.append(name)
+            if kind == "audio":
+                channels = t.get("demux-channel-count")
+                if channels:
+                    parts.append(self.CHANNELS.get(channels, f"{channels} ch"))
+                if t.get("codec"):
+                    parts.append(str(t["codec"]).upper())
+            if t.get("title") and t["title"] not in parts:
                 parts.append(t["title"])
-            if kind == "audio" and t.get("demux-channel-count"):
-                parts.append(f"({t['demux-channel-count']} ch)")
             if t.get("external"):
-                parts.append("[external]")
-            result.append((t["id"], " ".join(parts), bool(t.get("selected"))))
+                parts.append("from file")
+            result.append((t["id"], " · ".join(parts), bool(t.get("selected"))))
         return result
 
     def select_audio(self, track_id):

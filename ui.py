@@ -12,10 +12,12 @@ In fullscreen the control bar moves into a small floating window over the video,
 with real Windows blur behind it, and hides itself when the mouse stops moving.
 """
 
+import ctypes
 import os
+import sys
 
 from PySide6.QtCore import Qt, QTimer, Signal, QEvent, QSize
-from PySide6.QtGui import QAction, QActionGroup, QPixmap, QPainterPath, QRegion, QIcon, QKeySequence, QFont
+from PySide6.QtGui import QAction, QActionGroup, QPixmap, QPainterPath, QRegion, QIcon, QKeySequence, QFont, QCursor
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QSlider, QLabel, QPushButton, QToolButton,
     QMenu, QFrame, QHBoxLayout, QVBoxLayout, QStackedWidget, QFileDialog, QMessageBox, QStyle,
@@ -212,6 +214,8 @@ class MainWindow(QMainWindow):
         self.settings_window = None
         self.was_maximized = False
         self._icon_state = {}   # last drawn state of play/mute/fullscreen/boost icons
+        self.last_mouse_position = None
+        self.cursor_hidden = False
 
         self.setWindowTitle(app_info.APP_NAME)
         self.setWindowIcon(QIcon(app_info.LOGO_PATH))
@@ -409,7 +413,7 @@ class MainWindow(QMainWindow):
         audio = bar.addMenu("&Audio")
         tracks = audio.addMenu("Audio Track")
         icons.bind(tracks.menuAction(), "audiotrack")
-        tracks.aboutToShow.connect(lambda: self._fill_track_menu(tracks, "audio"))
+        tracks.aboutToShow.connect(lambda: self._fill_audio_menu(tracks))
         audio.addSeparator()
         self.boost_action = QAction("Dialogue Boost\tD", self, checkable=True)
         self.boost_action.setChecked(self.s.boost_enabled)
@@ -472,6 +476,10 @@ class MainWindow(QMainWindow):
             else:
                 action.triggered.connect(lambda _=False, i=track_id: self.player.select_sub(i))
             group.addAction(action)
+
+    def _fill_audio_menu(self, menu):
+        menu.clear()   # the menu is refilled every time it opens; without this, tracks pile up
+        self._fill_track_menu(menu, "audio")
 
     def _fill_subtitle_menu(self, menu):
         menu.clear()
@@ -700,7 +708,6 @@ class MainWindow(QMainWindow):
     def exit_fullscreen(self):
         if not self.isFullScreen():
             return
-        self.hide_timer.stop()
         self.overlay.hide()
         self.central_layout.addWidget(self.controls)   # move the bar back under the video
         repolish(self.controls)
@@ -720,15 +727,37 @@ class MainWindow(QMainWindow):
                                  screen.y() + screen.height() - height - 32, width, height)
 
     def _hide_controls(self):
+        """The mouse has been still for a while: hide the fullscreen controls and
+        the cursor (only over the video, never over buttons or menus)."""
         if self.isFullScreen():
             self.overlay.hide()
+        if self.player.has_file and self.isActiveWindow() and not self.overlay.underMouse() and \
+                self.video.rect().contains(self.video.mapFromGlobal(QCursor.pos())):
+            self._set_cursor_hidden(True)
+
+    def _set_cursor_hidden(self, hidden):
+        """Hide/show the mouse pointer. Over the video the pointer belongs to mpv's own
+        window, so Qt's setCursor() can't hide it; Windows' ShowCursor() can.
+        ShowCursor keeps a counter, so we only call it when the state really changes."""
+        if hidden == self.cursor_hidden:
+            return
+        self.cursor_hidden = hidden
+        if sys.platform == "win32":
+            ctypes.windll.user32.ShowCursor(not hidden)
 
     def on_mouse_moved(self):
-        if self.isFullScreen():
-            if not self.overlay.isVisible():
-                self._place_overlay()
-                self.overlay.show()
-            self.hide_timer.start()   # restart the countdown
+        # Windows also sends "mouse moved" when a window appears or disappears under a
+        # still mouse (e.g. when we hide the controls). Those fake moves would keep the
+        # cursor visible forever, so only react when the position really changed.
+        position = QCursor.pos()
+        if position == self.last_mouse_position:
+            return
+        self.last_mouse_position = position
+        self._set_cursor_hidden(False)
+        if self.isFullScreen() and not self.overlay.isVisible():
+            self._place_overlay()
+            self.overlay.show()
+        self.hide_timer.start()   # restart the countdown
 
     # ------------------------------------------------------------------ input
     def handle_key(self, key):
@@ -764,6 +793,8 @@ class MainWindow(QMainWindow):
     def eventFilter(self, obj, event):
         if event.type() == QEvent.MouseMove:
             self.on_mouse_moved()
+        elif event.type() == QEvent.ApplicationDeactivate:
+            self._set_cursor_hidden(False)   # never leave the pointer hidden when switching apps
         return False   # never swallow the event
 
     # Drag and drop: open videos, load subtitle files as subtitles.
@@ -784,6 +815,8 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ closing
     def closeEvent(self, event):
         self.tick_timer.stop()   # mpv is shut down below; stop polling it
+        self.hide_timer.stop()
+        self._set_cursor_hidden(False)
         self.remember_position()
         if not self.isFullScreen() and not self.isMaximized():
             self.s.window_width = self.width()

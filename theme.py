@@ -182,6 +182,8 @@ QPushButton[variant="nav"] {{ text-align: left; padding: 0 16px; min-height: 56p
     color: {c['onSurfaceVariant']}; }}
 QPushButton[variant="nav"]:hover {{ background: {hover}; }}
 QPushButton[variant="nav"]:checked {{ background: {c['secondaryContainer']}; color: {c['onSecondaryContainer']}; font-weight: 600; }}
+QPushButton[variant="nav"][rail="true"] {{ text-align: center; padding: 0; min-width: 56px; max-width: 56px;
+    min-height: 56px; max-height: 56px; border-radius: 28px; margin-left: 4px; }}
 
 /* color swatch for subtitle colors */
 QPushButton[variant="swatch"] {{ min-width: 36px; max-width: 36px; min-height: 36px; max-height: 36px;

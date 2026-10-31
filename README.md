@@ -101,7 +101,7 @@ and the sound stays **stereo**. It's perfect for laptop speakers, headphones and
 
 ## 📥 Download & install
 
-1. Download **`DialogueBoostPlayer_Setup_1.0.0.exe`** from the [**latest release**](https://github.com/tamimrijan/Dialogue-Boost-Player/releases/latest).
+1. Download **`DialogueBoostPlayer_Setup_1.1.0.exe`** from the [**latest release**](https://github.com/tamimrijan/Dialogue-Boost-Player/releases/latest).
 2. Run it and follow the setup wizard. You can install for all users, or just for yourself (no admin needed).
 3. Open it from the desktop shortcut, or right-click any video → **Open with** → **Dialogue Boost Player**.
 

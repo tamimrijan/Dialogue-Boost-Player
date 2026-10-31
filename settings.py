@@ -43,6 +43,9 @@ class AppSettings:
     window_width: int = 1100
     window_height: int = 700
     last_folder: str = ""
+    settings_page: str = "appearance"   # Settings window reopens on the last page...
+    settings_width: int = 900           # ...at the last size
+    settings_height: int = 640
     # Resume positions: { "c:/path/to/movie.mkv": seconds }
     positions: dict = field(default_factory=dict)
 

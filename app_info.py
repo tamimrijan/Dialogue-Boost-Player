@@ -10,7 +10,7 @@ import sys
 
 APP_NAME = "Dialogue Boost Player"
 EXE_NAME = "DialogueBoostPlayer"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 DESCRIPTION = "A video player that makes movie dialogue clear without blowing up the explosions."
 
 AUTHOR = "Tamim Ahmed Rijan"

@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt, Signal, QSize, QRectF, QUrl
 from PySide6.QtGui import QPainter, QColor, QPixmap, QDesktopServices, QFont, QPainterPath, QLinearGradient, QPen
 from PySide6.QtWidgets import (
     QDialog, QWidget, QAbstractButton, QSlider, QLabel, QPushButton, QFrame, QComboBox,
-    QHBoxLayout, QVBoxLayout, QButtonGroup, QStackedWidget, QScrollArea,
+    QHBoxLayout, QVBoxLayout, QButtonGroup, QStackedWidget, QScrollArea, QStyle,
 )
 
 import app_info
@@ -57,42 +57,111 @@ def card(*rows):
     return frame
 
 
-def list_item(title, supporting=None, trailing=None, below=None):
+class ListItem(QWidget):
     """An M3 list item: title + supporting text on the left, a control on the right,
-    and optionally a full-width control below (for sliders)."""
-    item = QWidget()
-    outer = QVBoxLayout(item)
-    outer.setContentsMargins(0, 12, 0, 12)
-    outer.setSpacing(6)
-    row = QHBoxLayout()
-    texts = QVBoxLayout()
-    texts.setSpacing(2)
-    texts.addWidget(text(title, "bodyLarge"))
-    if supporting:
-        texts.addWidget(text(supporting, "bodyMedium", wrap=True))
-    row.addLayout(texts, 1)
-    if trailing is not None:
-        row.addWidget(trailing, 0, Qt.AlignVCenter)
-    outer.addLayout(row)
-    if below is not None:
-        outer.addWidget(below)
-    return item
+    and optionally a full-width control below (for sliders).
+    If the control is a Switch, clicking anywhere on the row flips it (big target, easy to hit)."""
+
+    def __init__(self, title, supporting=None, trailing=None, below=None):
+        super().__init__()
+        self.switch = trailing if isinstance(trailing, Switch) else None
+        if self.switch:
+            self.setCursor(Qt.PointingHandCursor)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 12, 0, 12)
+        outer.setSpacing(6)
+        row = QHBoxLayout()
+        texts = QVBoxLayout()
+        texts.setSpacing(2)
+        texts.addWidget(text(title, "bodyLarge"))
+        if supporting:
+            texts.addWidget(text(supporting, "bodyMedium", wrap=True))
+        row.addLayout(texts, 1)
+        if trailing is not None:
+            row.addSpacing(12)
+            row.addWidget(trailing, 0, Qt.AlignVCenter)
+        outer.addLayout(row)
+        if below is not None:
+            outer.addWidget(below)
+
+    def mouseReleaseEvent(self, event):
+        if self.switch and event.button() == Qt.LeftButton:
+            self.switch.click()
+        super().mouseReleaseEvent(event)
 
 
-def page(title, intro=None):
-    """A scrollable page with a headline. Returns (scroll area, layout to add content to)."""
+def list_item(title, supporting=None, trailing=None, below=None):
+    return ListItem(title, supporting, trailing, below)
+
+
+class Slider(QSlider):
+    """Settings slider. Click anywhere on it to jump there. The mouse wheel only moves it
+    after you've clicked it, so scrolling the page never changes a setting by accident."""
+
+    def __init__(self, minimum, maximum):
+        super().__init__(Qt.Horizontal)
+        self.setRange(minimum, maximum)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.setValue(QStyle.sliderValueFromPosition(
+                self.minimum(), self.maximum(), int(event.position().x()), self.width()))
+        super().mousePressEvent(event)
+
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()   # let the page scroll instead
+
+
+CONTENT_WIDTH = 760   # pages never get wider than this, so lines stay easy to read
+
+
+def centered(widget):
+    """Center a widget horizontally and stop it from growing wider than CONTENT_WIDTH."""
+    widget.setMaximumWidth(CONTENT_WIDTH)
+    holder = QWidget(objectName="page")
+    row = QHBoxLayout(holder)
+    row.setContentsMargins(0, 0, 0, 0)
+    row.addWidget(widget)
+    return holder
+
+
+def page(title, intro=None, header_extra=None):
+    """A page: a fixed header (title, intro, optional widget such as a preview) that stays
+    visible, and scrollable content below it.
+    Returns (page widget, layout to add the content to)."""
+    outer = QWidget(objectName="page")
+    column = QVBoxLayout(outer)
+    column.setContentsMargins(0, 0, 0, 0)
+    column.setSpacing(0)
+
+    header = QWidget(objectName="page")
+    head = QVBoxLayout(header)
+    head.setContentsMargins(32, 28, 32, 12)
+    head.setSpacing(6)
+    head.addWidget(text(title, "headlineSmall"))
+    if intro:
+        head.addWidget(text(intro, "bodyMedium", wrap=True))
+    if header_extra is not None:
+        head.addSpacing(8)
+        head.addWidget(header_extra)
+    column.addWidget(centered(header))
+
     content = QWidget(objectName="page")
     layout = QVBoxLayout(content)
-    layout.setContentsMargins(32, 28, 32, 28)
+    layout.setContentsMargins(32, 8, 32, 28)
     layout.setSpacing(16)
-    layout.addWidget(text(title, "headlineSmall"))
-    if intro:
-        layout.addWidget(text(intro, "bodyMedium", wrap=True))
     scroll = QScrollArea()
-    scroll.setWidget(content)
+    scroll.setWidget(centered(content))
     scroll.setWidgetResizable(True)
     scroll.setFrameShape(QFrame.NoFrame)
-    return scroll, layout
+    scroll.verticalScrollBar().setSingleStep(24)
+    column.addWidget(scroll, 1)
+    return outer, layout
 
 
 # ============================================================================
@@ -230,23 +299,23 @@ class SettingsWindow(QDialog):
         self.s = settings
         self.sub_delay = 0.0
         self._updating = False
+        self.compact = None   # True = narrow window: the drawer shrinks to an icon rail
         self.setWindowTitle("Settings")
-        self.resize(900, 640)
-        self.setMinimumSize(760, 520)
+        self.setMinimumSize(560, 460)
+        self.resize(self.s.settings_width, self.s.settings_height)   # remembered from last time
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
         # ---- navigation drawer ----
-        drawer = QWidget(objectName="drawer")
-        drawer.setFixedWidth(250)
-        nav = QVBoxLayout(drawer)
+        self.drawer = QWidget(objectName="drawer")
+        nav = QVBoxLayout(self.drawer)
         nav.setContentsMargins(12, 20, 12, 16)
         nav.setSpacing(2)
-        heading = text("Settings", "titleSmall")
-        heading.setContentsMargins(16, 0, 0, 12)
-        nav.addWidget(heading)
+        self.heading = text("Settings", "titleSmall")
+        self.heading.setContentsMargins(16, 0, 0, 12)
+        nav.addWidget(self.heading)
         self.nav_group = QButtonGroup(self)
         self.nav_buttons = {}
         self.stack = QStackedWidget()
@@ -255,6 +324,7 @@ class SettingsWindow(QDialog):
         for key, label, icon_name in self.PAGES:
             b = QPushButton("   " + label)
             b.setProperty("variant", "nav")
+            b.setToolTip(label)
             b.setCheckable(True)
             b.setCursor(Qt.PointingHandCursor)
             b.setIconSize(QSize(22, 22))
@@ -265,17 +335,48 @@ class SettingsWindow(QDialog):
             nav.addWidget(b)
             self.stack.addWidget(builders[key]())
         nav.addStretch()
-        nav.addWidget(text(f"Version {app_info.VERSION}", "bodySmall"), 0, Qt.AlignHCenter)
-        root.addWidget(drawer)
+        self.footer = text("Changes are saved automatically.", "bodySmall", wrap=True)
+        self.footer.setAlignment(Qt.AlignCenter)
+        nav.addWidget(self.footer)
+        self.version_label = text(f"Version {app_info.VERSION}", "bodySmall")
+        nav.addWidget(self.version_label, 0, Qt.AlignHCenter)
+        root.addWidget(self.drawer)
         root.addWidget(self.stack, 1)
 
-        self.show_page("appearance")
+        keys = [k for k, _, _ in self.PAGES]
+        self.show_page(self.s.settings_page if self.s.settings_page in keys else "appearance")
+        self._update_layout()
         theme.title_bar(self)   # before the first show, so Windows 10 draws it right away
+
+    # ------------------------------------------------------------------ responsive layout
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.s.settings_width, self.s.settings_height = self.width(), self.height()
+        self._update_layout()
+
+    def _update_layout(self):
+        """Wide window: drawer with labels. Narrow window: a slim rail with icons only
+        (hover an icon to see its name), leaving more room for the settings."""
+        compact = self.width() < 780
+        if compact == self.compact:
+            return
+        self.compact = compact
+        self.drawer.setFixedWidth(88 if compact else 250)
+        self.heading.setVisible(not compact)
+        self.footer.setVisible(not compact)
+        self.version_label.setVisible(not compact)
+        for key, label, _ in self.PAGES:
+            b = self.nav_buttons[key]
+            b.setText("" if compact else "   " + label)
+            b.setProperty("rail", compact)
+            b.style().unpolish(b)
+            b.style().polish(b)
 
     # ------------------------------------------------------------------ public
     def show_page(self, key):
         keys = [k for k, _, _ in self.PAGES]
         self.stack.setCurrentIndex(keys.index(key))
+        self.s.settings_page = key   # reopen here next time
         for k, b in self.nav_buttons.items():
             b.setChecked(k == key)
             icons.bind(b, dict((p[0], p[2]) for p in self.PAGES)[k],
@@ -328,24 +429,33 @@ class SettingsWindow(QDialog):
         return scroll
 
     def _subtitles_page(self):
-        scroll, layout = page("Subtitles", "Changes apply right away to the video that is playing.")
         sub = self.s.subtitles
+        # The preview sits in the fixed header, so it stays visible while you scroll and tweak.
         self.preview = SubtitlePreview(sub)
-        layout.addWidget(self.preview)
+        self.preview.setFixedHeight(120)
+        scroll, layout = page("Subtitles", "Changes apply right away to the video that is playing.",
+                              header_extra=self.preview)
 
         # Size & position
-        self.sub_size = QSlider(Qt.Horizontal)
-        self.sub_size.setRange(30, 300)
+        self.sub_size = Slider(30, 300)
         self.sub_size.setSingleStep(5)
         self.sub_size.setPageStep(10)
         self.sub_size_value = text("", "value")
-        self.sub_pos = QSlider(Qt.Horizontal)
-        self.sub_pos.setRange(0, 100)
+        self.sub_size_quick = Segmented([("70", "Small"), ("100", "Normal"), ("140", "Large")])
+        self.sub_size_quick.changed.connect(lambda key: self.sub_size.setValue(int(key)))
+        size_box = QWidget()
+        size_layout = QVBoxLayout(size_box)
+        size_layout.setContentsMargins(0, 4, 0, 0)
+        size_layout.setSpacing(8)
+        size_layout.addWidget(self.sub_size_quick)
+        size_layout.addWidget(self.sub_size)
+        self.sub_pos = Slider(0, 100)
         self.sub_pos_value = text("", "value")
         self.sub_override = Switch(sub.override)
         layout.addWidget(text("SIZE AND POSITION", "overline"))
         layout.addWidget(card(
-            list_item("Size", "Too big? Drag left. Shortcut: Ctrl+[ and Ctrl+]", self.sub_size_value, self.sub_size),
+            list_item("Size", "Too big or too small? Pick a size, or drag for any size. Shortcut: Ctrl+[ and Ctrl+]",
+                      self.sub_size_value, size_box),
             list_item("Position", "Move the subtitles up from the bottom edge.", self.sub_pos_value, self.sub_pos),
             list_item("Override subtitle file styles",
                       "Use these settings even when the subtitle file has its own fonts, sizes and colors. "
@@ -438,8 +548,7 @@ class SettingsWindow(QDialog):
         self.boost_values = {}
         rows = []
         for attr, title, supporting, lo, hi, unit in specs:
-            slider = QSlider(Qt.Horizontal)
-            slider.setRange(lo, hi)
+            slider = Slider(lo, hi)
             value = text("", "value")
             slider.valueChanged.connect(lambda v, a=attr, u=unit: self._on_boost_slider(a, v, u))
             self.boost_sliders[attr] = slider
@@ -556,6 +665,8 @@ class SettingsWindow(QDialog):
     def _show_sub_values(self):
         sub = self.s.subtitles
         self.sub_size_value.setText(f"{sub.size} %")
+        quick = str(sub.size)
+        self.sub_size_quick.set_value(quick if quick in self.sub_size_quick.buttons else None)
         self.sub_pos_value.setText("Bottom" if sub.position == 100 else f"{sub.position} %")
         self.preview.update()
 
